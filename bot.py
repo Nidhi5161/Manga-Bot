@@ -234,11 +234,25 @@ async def strict_search_router(event):
     
     md_info, comick_info = await asyncio.gather(md_task, comick_task)
     
-    # Priority selection or fallback grouping
-    info = md_info if md_info else comick_info
+    # SMART ENGINE PICKER: Check if MangaDex actually has content first
+    info = None
+    chapters = []
     
-    if not info:
-        await status_msg.edit("❌ Title not found across MangaDex or ComicK index channels.")
+    if md_info:
+        # Check if MangaDex has readable chapters without telling the user
+        chapters = await get_all_chapters(md_info["manga_id"], "mdex")
+        if chapters:
+            info = md_info
+            
+    # Fallback to ComicK silently if MangaDex had 0 chapters or didn't exist
+    if not info and comick_info:
+        chapters = await get_all_chapters(comick_info["manga_id"], "comick")
+        if chapters:
+            info = comick_info
+
+    # Standardized clean error message
+    if not info or not chapters:
+        await status_msg.edit("❌ Not Available.")
         return
         
     chapters = await get_all_chapters(info["manga_id"], info["engine"])

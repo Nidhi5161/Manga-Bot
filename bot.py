@@ -227,6 +227,31 @@ async def callback_handler(event):
             if os.path.exists(pdf): os.remove(pdf)
             await prog.delete()
 
+# --- RUN DUMMY SERVER TO KEEP RENDER HAPPY ---
+def run_dummy_server():
+    import http.server
+    import socketserver
+    import threading
+
+    PORT = int(os.environ.get("PORT", 10000))
+    handler = http.server.SimpleHTTPRequestHandler
+    
+    def server_thread():
+        with socketserver.TCPServer(("", PORT), handler) as httpd:
+            print(f"🌍 Dummy web server listening on port: {PORT}")
+            httpd.serve_forever()
+            
+    t = threading.Thread(target=server_thread, daemon=True)
+    t.start()
+
+# --- ACTUAL BOT START (LEAVE ALL YOUR MANGADEX FUNCTIONS ABOVE THIS!) ---
 if __name__ == "__main__":
+    print("🤖 MMMWC Downloader Bot is firing up...")
+    
+    # 1. Start the tiny web server so Render sees an active port
+    run_dummy_server()
+    
+    # 2. Start your actual Telethon bot listener
     bot.start(bot_token=BOT_TOKEN)
+    print("✅ Bot is online and listening for messages on Telethon wrapper!")
     bot.run_until_disconnected()

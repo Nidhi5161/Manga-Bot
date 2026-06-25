@@ -5,9 +5,7 @@ import shutil
 import httpx
 from PIL import Image
 from telethon import TelegramClient, events, Button
-
-# Import the cracked bypass engine components
-from comick_engine import search_comick, get_comick_chapters, get_chapter_pages # type: ignore
+from curl_cffi import requests  # Used for our cracked Cloudflare bypass
 
 # ==========================================
 # 1. TELEGRAM API CREDENTIALS & INITIALIZATION
@@ -133,14 +131,87 @@ def build_chapter_keyboard(chapters, offset, manga_id, title_hint):
     return menu
 
 # ==========================================
-# 4. TELEGRAM GLOBAL BOT COMMANDS
+# 4. COMICK CRACKED ENGINE FUNCTIONS (Moved Inline!)
+# ==========================================
+def search_comick(manga_title):
+    """Searches ComicK and returns a clean list of matches."""
+    url = "https://api.comick.dev/v1.0/search"
+    params = {"q": manga_title, "limit": "5", "t": "false"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://comick.dev",
+        "Referer": "https://comick.dev/search"
+    }
+    try:
+        response = requests.get(url, params=params, headers=headers, impersonate="chrome120")
+        if response.status_code == 200:
+            results = response.json()
+            return [{"title": item.get("title"), "slug": item.get("slug")} for item in results]
+    except Exception as e:
+        print(f"⚠️ ComicK search error: {e}")
+    return []
+
+def get_comick_chapters(comic_slug):
+    """Fetches the latest chapters for a manga on ComicK."""
+    url = f"https://api.comick.dev/comic/{comic_slug}/chapters"
+    params = {"lang": "en", "limit": "10"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Origin": "https://comick.dev"
+    }
+    try:
+        response = requests.get(url, params=params, headers=headers, impersonate="chrome120")
+        if response.status_code == 200:
+            data = response.json()
+            chapters = data.get("chapters", [])
+            parsed_chapters = []
+            for ch in chapters:
+                chap_num = ch.get("chap", "Oneshot")
+                title = ch.get("title") or f"Chapter {chap_num}"
+                hid = ch.get("hid")
+                parsed_chapters.append({
+                    "display": f"Ch. {chap_num} - {title[:20]}",
+                    "hid": hid
+                })
+            return parsed_chapters
+    except Exception as e:
+        print(f"⚠️ ComicK chapter fetch error: {e}")
+    return []
+
+def get_chapter_pages(chapter_hid):
+    """Fetches the actual image download URLs for a ComicK chapter ID."""
+    url = f"https://api.comick.dev/chapter/{chapter_hid}"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Origin": "https://comick.dev"
+    }
+    try:
+        response = requests.get(url, headers=headers, impersonate="chrome120")
+        if response.status_code == 200:
+            data = response.json()
+            chapter_data = data.get("chapter", {})
+            images = chapter_data.get("md_images", [])
+            image_urls = []
+            for img in images:
+                file_path = img.get("b")
+                if file_path:
+                    full_url = f"https://meo.comick.pictures/{file_path}"
+                    image_urls.append(full_url)
+            return image_urls
+    except Exception as e:
+        print(f"⚠️ ComicK page fetch error: {e}")
+    return []
+
+# ==========================================
+# 5. TELEGRAM GLOBAL BOT COMMANDS
 # ==========================================
 @bot.on(events.NewMessage(pattern='/start'))
 async def start_cmd(event):
     await event.reply("👋 **Welcome to MMMWC Manga Space!**\nSend me any manga title to view its profile, browse chapters via MangaDex, or use `/search [title]` to download using the bypassed ComicK engine.")
 
 # ==========================================
-# 5. MANGADEX RUNTIME EVENT LISTENERS
+# 6. MANGADEX RUNTIME EVENT LISTENERS
 # ==========================================
 @bot.on(events.NewMessage)
 async def manga_search_handler(event):
@@ -176,7 +247,6 @@ async def manga_search_handler(event):
     await status_msg.delete()
     await bot.send_message(event.chat_id, caption, buttons=buttons)
 
-# Fixed: Explicitly intercepting MangaDex custom prefixes to avoid button crossover bugs
 @bot.on(events.CallbackQuery(pattern=r'(page|sub|dl)_.+'))
 async def md_callback_handler(event):
     data = event.data.decode('utf-8')
@@ -235,7 +305,7 @@ async def md_callback_handler(event):
             await prog.delete()
 
 # ==========================================
-# 6. COMICK CRACKED INTERFACE LISTENERS
+# 7. COMICK CRACKED INTERFACE LISTENERS
 # ==========================================
 @bot.on(events.NewMessage(pattern=r'/search (?P<query>.+)'))
 async def handle_comick_search(event):
@@ -299,7 +369,7 @@ async def handle_comick_download_trigger(event):
         await event.respond("❌ An error occurred while streaming raw images to Telegram.")
 
 # ==========================================
-# 7. WEB CONTAINER SYSTEM SUBSYSTEMS
+# 8. WEB CONTAINER SYSTEM SUBSYSTEMS
 # ==========================================
 def run_dummy_server():
     import http.server
@@ -318,7 +388,7 @@ def run_dummy_server():
     t.start()
 
 # ==========================================
-# 8. LIFECYCLE CONTROLLER APPLICATION ENTRYS
+# 9. LIFECYCLE CONTROLLER APPLICATION ENTRY
 # ==========================================
 if __name__ == "__main__":
     print("🤖 MMMWC Downloader Bot is firing up...")

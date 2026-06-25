@@ -6,16 +6,24 @@ import httpx
 from PIL import Image
 from telethon import TelegramClient, events, Button
 
-# 1. TELEGRAM API CREDENTIALS
+# Import the cracked bypass engine components
+from comick_engine import search_comick, get_comick_chapters, get_chapter_pages # type: ignore
+
+# ==========================================
+# 1. TELEGRAM API CREDENTIALS & INITIALIZATION
+# ==========================================
 API_ID = 33777175     
 API_HASH = "39385c53937e92e13e6b1f9477a531c3"  
 BOT_TOKEN = "8982142957:AAGJf8YSnst9rvpEpFbGQysGn7Q48Zk1LBk"
 
 bot = TelegramClient('mmmwc_bot_session', API_ID, API_HASH)
+
 BASE_URL = "https://api.mangadex.org"
 SUBS_FILE = "subscriptions.json"
 
-# --- DB HELPERS ---
+# ==========================================
+# 2. LOCAL DATA STORAGE DATABASE HELPERS
+# ==========================================
 def load_subs():
     if os.path.exists(SUBS_FILE):
         try:
@@ -41,7 +49,9 @@ def toggle_subscription(chat_id, manga_id, title, last_chap):
     save_subs(subs)
     return action
 
-# --- MANGADEX DATA ENGINE ---
+# ==========================================
+# 3. MANGADEX BACKEND DATA ENGINES
+# ==========================================
 async def get_manga_profile(manga_title: str):
     async with httpx.AsyncClient(headers={"User-Agent": "MMMWCBot/1.0"}) as client:
         params = {"title": manga_title, "limit": 1, "includes[]": ["cover_art", "author"]}
@@ -89,7 +99,6 @@ async def get_all_chapters(manga_id: str):
             if len(feed_data) < limit: break
             offset += limit
 
-    # Filter duplicates out keeping unique chapter markers
     seen = set()
     unique_chapters = []
     for c in chapters:
@@ -98,13 +107,11 @@ async def get_all_chapters(manga_id: str):
             unique_chapters.append(c)
     return sorted(unique_chapters, key=lambda x: float(x["num"]) if x["num"].replace('.','',1).isdigit() else 0)
 
-# --- TELEGRAM LAYOUT BUILDERS ---
 def build_chapter_keyboard(chapters, offset, manga_id, title_hint):
     """Creates a clean paginated grid list layout of chapters."""
     limit = 8
     chunk = chapters[offset:offset+limit]
     
-    # Grid construction: 2 columns per row
     menu = []
     row = []
     for idx, ch in enumerate(chunk):
@@ -113,7 +120,6 @@ def build_chapter_keyboard(chapters, offset, manga_id, title_hint):
             menu.append(row)
             row = []
             
-    # Navigation Row Controls
     nav_buttons = []
     if offset > 0:
         nav_buttons.append(Button.inline("⬅️ Prev", data=f"page_{manga_id}_{offset-limit}"))
@@ -122,27 +128,31 @@ def build_chapter_keyboard(chapters, offset, manga_id, title_hint):
     if nav_buttons:
         menu.append(nav_buttons)
         
-    # Global Action Options Row
     last_ch = chapters[-1]["num"] if chapters else "0"
     menu.append([Button.inline("🔔 Track/Subscribe", data=f"sub_{manga_id}_{last_ch}_{title_hint[:20]}")])
     return menu
 
-# --- TELEGRAM BOT EVENT HANDLERS ---
+# ==========================================
+# 4. TELEGRAM GLOBAL BOT COMMANDS
+# ==========================================
 @bot.on(events.NewMessage(pattern='/start'))
 async def start_cmd(event):
-    await event.reply("👋 **Welcome to MMMWC Manga Space!**\nSend me any manga title to view its profile, browse all available chapters, and stream your downloads.")
+    await event.reply("👋 **Welcome to MMMWC Manga Space!**\nSend me any manga title to view its profile, browse chapters via MangaDex, or use `/search [title]` to download using the bypassed ComicK engine.")
 
+# ==========================================
+# 5. MANGADEX RUNTIME EVENT LISTENERS
+# ==========================================
 @bot.on(events.NewMessage)
 async def manga_search_handler(event):
     if event.text.startswith('/'): return
     query = event.text
-    status_msg = await event.reply("🔍 Searching indices...")
+    status_msg = await event.reply("🔍 Searching MangaDex indices...")
     
     info = await get_manga_profile(query)
     if not info:
         await status_msg.edit("❌ Title not located.")
         return
-        
+    
     chapters = await get_all_chapters(info["manga_id"])
     if not chapters:
         await status_msg.edit("❌ No English chapters listed for this title.")
@@ -166,8 +176,9 @@ async def manga_search_handler(event):
     await status_msg.delete()
     await bot.send_message(event.chat_id, caption, buttons=buttons)
 
-@bot.on(events.CallbackQuery)
-async def callback_handler(event):
+# Fixed: Explicitly intercepting MangaDex custom prefixes to avoid button crossover bugs
+@bot.on(events.CallbackQuery(pattern=r'(page|sub|dl)_.+'))
+async def md_callback_handler(event):
     data = event.data.decode('utf-8')
     parts = data.split("_")
     prefix = parts[0]
@@ -189,7 +200,6 @@ async def callback_handler(event):
         ch_id, ch_num, m_id = parts[1], parts[2], parts[3]
         prog = await event.respond(f"⏳ Constructing layout layers for Chapter {ch_num}...")
         
-        # Internal download processing logic remains the same
         async with httpx.AsyncClient(headers={"User-Agent": "MMMWCBot/1.0"}) as client:
             res = await client.get(f"{BASE_URL}/at-home/server/{ch_id}")
             d = res.json()
@@ -202,7 +212,6 @@ async def callback_handler(event):
             folder = f"ch_{ch_id}"
             if not os.path.exists(folder): os.makedirs(folder)
             
-            # Parallel pipeline downloads
             tasks = []
             async def dl_p(url, path):
                 r = await client.get(url)
@@ -213,7 +222,6 @@ async def callback_handler(event):
                 tasks.append(dl_p(f"{base}/data/{hash_id}/{f}", os.path.join(folder, f"{i+1:03d}.jpg")))
             await asyncio.gather(*tasks)
             
-            # Assemble PDF
             pdf = f"Ch_{ch_num}.pdf"
             imgs = [Image.open(os.path.join(folder, fl)) for fl in sorted(os.listdir(folder)) if fl.endswith(".jpg")]
             if imgs:
@@ -222,39 +230,103 @@ async def callback_handler(event):
                 await prog.edit("🚀 Delivering artifact payload...")
                 await bot.send_file(event.chat_id, pdf, caption=f"✅ Chapter {ch_num} compilation complete.")
                 
-            # Instant Storage Cleanup
             if os.path.exists(folder): shutil.rmtree(folder)
             if os.path.exists(pdf): os.remove(pdf)
             await prog.delete()
 
-# --- RUN DUMMY SERVER TO KEEP RENDER HAPPY ---
+# ==========================================
+# 6. COMICK CRACKED INTERFACE LISTENERS
+# ==========================================
+@bot.on(events.NewMessage(pattern=r'/search (?P<query>.+)'))
+async def handle_comick_search(event):
+    query = event.pattern_match.group('query')
+    await event.respond("🔍 Searching the ComicK network database...")
+    
+    results = search_comick(query)
+    if not results:
+        await event.respond("❌ No manga found matching that title on ComicK. Try again!")
+        return
+        
+    buttons = []
+    for item in results:
+        display_text = f"📖 {item['title'][:30]}"
+        callback_data = f"ck_show:{item['slug']}"
+        buttons.append([Button.inline(display_text, data=callback_data)])
+        
+    await event.respond("🎯 ComicK Database: Select the match you want to download:", buttons=buttons)
+
+@bot.on(events.CallbackQuery(pattern=r'ck_show:(?P<slug>.+)'))
+async def handle_comick_manga_select(event):
+    slug = event.pattern_match.group('slug').decode('utf-8')
+    await event.answer("Fetching chapter list...", alert=False)
+    
+    chapters = get_comick_chapters(slug)
+    if not chapters:
+        await event.edit("❌ Failed to pull the chapter logs for this entry.")
+        return
+        
+    buttons = []
+    for ch in chapters:
+        buttons.append([Button.inline(ch['display'], data=f"ck_dl:{ch['hid']}")])
+        
+    await event.edit("⚡ Select a ComicK chapter to download directly:", buttons=buttons)
+
+@bot.on(events.CallbackQuery(pattern=r'ck_dl:(?P<hid>.+)'))
+async def handle_comick_download_trigger(event):
+    hid = event.pattern_match.group('hid').decode('utf-8')
+    
+    await event.answer("📥 Fetching chapter pages...", alert=False)
+    await event.edit("🚀 Bypassing Cloudflare CDN to pull image nodes...")
+    
+    page_urls = get_chapter_pages(hid)
+    if not page_urls:
+        await event.edit("❌ Failed to decrypt pages for this chapter. Try a different one!")
+        return
+        
+    await event.edit(f"📦 Found {len(page_urls)} pages. Transferring to Telegram stream... Hang tight!")
+    
+    try:
+        for idx, url in enumerate(page_urls, start=1):
+            await bot.send_file(
+                event.chat_id, 
+                file=url, 
+                caption=f"📄 Page {idx}/{len(page_urls)}"
+            )
+        await event.respond("🎉 ComicK Chapter download complete! Enjoy reading!")
+        
+    except Exception as upload_err:
+        print(f"⚠️ Upload error: {upload_err}")
+        await event.respond("❌ An error occurred while streaming raw images to Telegram.")
+
+# ==========================================
+# 7. WEB CONTAINER SYSTEM SUBSYSTEMS
+# ==========================================
 def run_dummy_server():
     import http.server
     import socketserver
     import threading
-    import os
-
-    # Render injects the PORT variable automatically; we grab it and force an integer
+    
     PORT = int(os.environ.get("PORT", 10000))
     handler = http.server.SimpleHTTPRequestHandler
     
     def server_thread():
-        # CRITICAL FIX: Changed "" to "0.0.0.0" so Render's internal scanner can see it
         with socketserver.TCPServer(("0.0.0.0", PORT), handler) as httpd:
             print(f"🌍 Dummy web server successfully bound to network interface 0.0.0.0:{PORT}")
             httpd.serve_forever()
             
     t = threading.Thread(target=server_thread, daemon=True)
     t.start()
-    
-# --- ACTUAL BOT START (LEAVE ALL YOUR MANGADEX FUNCTIONS ABOVE THIS!) ---
+
+# ==========================================
+# 8. LIFECYCLE CONTROLLER APPLICATION ENTRYS
+# ==========================================
 if __name__ == "__main__":
     print("🤖 MMMWC Downloader Bot is firing up...")
     
-    # 1. Start the tiny web server so Render sees an active port
+    # Start the local environment network loop for Render's health scans
     run_dummy_server()
     
-    # 2. Start your actual Telethon bot listener
-    bot.start(bot_token=BOT_TOKEN)
+    # Initialize the main listening loop
     print("✅ Bot is online and listening for messages on Telethon wrapper!")
+    bot.start(bot_token=BOT_TOKEN)
     bot.run_until_disconnected()

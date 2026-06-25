@@ -232,18 +232,21 @@ def run_dummy_server():
     import http.server
     import socketserver
     import threading
+    import os
 
+    # Render injects the PORT variable automatically; we grab it and force an integer
     PORT = int(os.environ.get("PORT", 10000))
     handler = http.server.SimpleHTTPRequestHandler
     
     def server_thread():
-        with socketserver.TCPServer(("", PORT), handler) as httpd:
-            print(f"🌍 Dummy web server listening on port: {PORT}")
+        # CRITICAL FIX: Changed "" to "0.0.0.0" so Render's internal scanner can see it
+        with socketserver.TCPServer(("0.0.0.0", PORT), handler) as httpd:
+            print(f"🌍 Dummy web server successfully bound to network interface 0.0.0.0:{PORT}")
             httpd.serve_forever()
             
     t = threading.Thread(target=server_thread, daemon=True)
     t.start()
-
+    
 # --- ACTUAL BOT START (LEAVE ALL YOUR MANGADEX FUNCTIONS ABOVE THIS!) ---
 if __name__ == "__main__":
     print("🤖 MMMWC Downloader Bot is firing up...")
